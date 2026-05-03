@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+
+{% block title %}Results: {{ task.title }} - Schedule Task App{% endblock %}
+
+{% block content %}
+<div class="result-container">
+    <div class="result-header">
+        <h2>{{ task.title }}</h2>
+        <div class="result-header-actions">
+            {% if task.script_code %}
+            <form method="POST" action="{{ url_for('main.run_task', task_id=task.id) }}" style="display:inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-run">▶ Run Again</button>
+            </form>
+            {% endif %}
+            <a href="{{ url_for('main.edit_task', task_id=task.id) }}" class="btn btn-secondary">✏ Edit</a>
+            <a href="{{ url_for('main.index') }}" class="btn btn-secondary">← Back</a>
+        </div>
+    </div>
+
+    {% if task.description %}
+    <p class="task-desc">{{ task.description }}</p>
+    {% endif %}
+
+    <div class="task-meta" style="margin-bottom: 1.5rem;">
+        <span>📅 {{ task.scheduled_date.strftime('%b %d, %Y') }}</span>
+        {% if task.scheduled_time %}
+        <span>🕐 {{ task.scheduled_time.strftime('%I:%M %p') }}</span>
+        {% endif %}
+        <span class="badge badge-schedule">{{ task.schedule_type | capitalize }}</span>
+        {% if task.notify_email %}
+        <span>📧 {{ task.notify_email }}</span>
+        {% endif %}
+    </div>
+
+    {% if task.script_code %}
+    <div class="code-section">
+        <h3>Script</h3>
+        <pre class="code-block">{{ task.script_code }}</pre>
+    </div>
+    {% endif %}
+
+    <h3 style="margin: 1.5rem 0 0.75rem;">Execution History</h3>
+
+    {% if logs %}
+    {% for log in logs %}
+    <div class="execution-log log-{{ log.status }}">
+        <div class="log-header">
+            <span class="log-status log-status-{{ log.status }}">{{ log.status | upper }}</span>
+            <span class="log-time">{{ log.started_at.strftime('%b %d, %Y %I:%M:%S %p') }}</span>
+            {% if log.finished_at and log.started_at %}
+            <span class="log-duration">Duration: {{ (log.finished_at - log.started_at).total_seconds() | round(2) }}s</span>
+            {% endif %}
+        </div>
+        {% if log.output %}
+        <div class="log-section">
+            <strong>Output:</strong>
+            <pre class="output-block output-success">{{ log.output }}</pre>
+        </div>
+        {% endif %}
+        {% if log.error %}
+        <div class="log-section">
+            <strong>Errors:</strong>
+            <pre class="output-block output-error">{{ log.error }}</pre>
+        </div>
+        {% endif %}
+        {% if not log.output and not log.error %}
+        <p class="log-empty">(no output)</p>
+        {% endif %}
+    </div>
+    {% endfor %}
+    {% else %}
+    <div class="empty-state" style="padding: 2rem;">
+        <p>No execution history yet. Click "Run" to execute the script.</p>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

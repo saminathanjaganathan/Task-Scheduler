@@ -1,0 +1,466 @@
+{% extends "base.html" %}
+
+{% block title %}{{ title }} - Schedule Task App{% endblock %}
+
+{% block content %}
+<div class="form-container" style="max-width: 800px;">
+    <h2>{{ title }}</h2>
+    <form method="POST" novalidate>
+        {{ form.hidden_tag() }}
+
+        <div class="form-group">
+            {{ form.title.label }}
+            {{ form.title(class="form-control", placeholder="Enter task title") }}
+            {% for error in form.title.errors %}
+                <span class="error">{{ error }}</span>
+            {% endfor %}
+        </div>
+
+        <div class="form-group">
+            {{ form.description.label }}
+            {{ form.description(class="form-control", rows=2, placeholder="Optional description") }}
+        </div>
+
+        <div class="form-group">
+            {{ form.script_type.label }}
+            {{ form.script_type(class="form-control", id="script_type") }}
+        </div>
+
+        <!-- SQL Connection Panel (shown only when script_type is sql) -->
+        <div id="sql-connection-panel" class="connection-panel" style="display:none;">
+            <div class="connection-header">
+                <label>🔌 Database Connection</label>
+                <button type="button" id="test-conn-btn" class="btn btn-sm btn-test-conn">🔍 Test Connection</button>
+            </div>
+            <span id="conn-spinner" style="display:none; font-size:0.85rem;">⏳ Testing...</span>
+            <div id="conn-result" class="conn-result" style="display:none;">
+                <span id="conn-result-text"></span>
+                <button type="button" id="conn-close-btn" class="btn btn-sm btn-secondary" style="margin-left:auto; font-size:0.75rem;">✕</button>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="sql_type">SQL Type</label>
+                    <select name="sql_type" id="sql_type" class="form-control">
+                        <option value="mssql" {% if task is defined and task.sql_type == 'mssql' %}selected{% endif %}>SQL Server (MSSQL)</option>
+                        <option value="postgres" {% if task is defined and task.sql_type == 'postgres' %}selected{% endif %}>PostgreSQL</option>
+                        <option value="mysql" {% if task is defined and task.sql_type == 'mysql' %}selected{% endif %}>MySQL</option>
+                        <option value="sqlite" {% if task is defined and task.sql_type == 'sqlite' %}selected{% endif %}>SQLite (In-Memory)</option>
+                    </select>
+                </div>
+                <div class="form-group" id="db-server-group">
+                    <label for="db_server">Server Name / Host</label>
+                    <input type="text" name="db_server" id="db_server" class="form-control" placeholder="localhost or server IP"
+                           value="{{ task.db_server if task is defined and task.db_server else '' }}">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group" id="db-port-group">
+                    <label for="db_port">Port</label>
+                    <input type="number" name="db_port" id="db_port" class="form-control" placeholder="Default"
+                           value="{{ task.db_port if task is defined and task.db_port else '' }}">
+                    <small class="form-hint" id="port-hint">MSSQL: 1433, PostgreSQL: 5432, MySQL: 3306</small>
+                </div>
+                <div class="form-group" id="db-name-group">
+                    <label for="db_name">Database Name</label>
+                    <input type="text" name="db_name" id="db_name" class="form-control" placeholder="Enter database name"
+                           value="{{ task.db_name if task is defined and task.db_name else '' }}">
+                </div>
+            </div>
+            <div class="form-row" id="db-credentials-row">
+                <div class="form-group" id="db-win-auth-group" style="display:none;">
+                    <label class="checkbox-label">
+                        <input type="checkbox" name="db_win_auth" id="db_win_auth"
+                               {% if task is defined and task.db_win_auth %}checked{% endif %}>
+                        Use Windows Authentication (Trusted Connection)
+                    </label>
+                    <small class="form-hint">Uses your current Windows login instead of username/password.</small>
+                </div>
+            </div>
+            <div class="form-row" id="db-user-pass-row">
+                <div class="form-group">
+                    <label for="db_username">Username</label>
+                    <input type="text" name="db_username" id="db_username" class="form-control" placeholder="Database username"
+                           value="{{ task.db_username if task is defined and task.db_username else '' }}" autocomplete="off">
+                </div>
+                <div class="form-group">
+                    <label for="db_password">Password</label>
+                    <input type="password" name="db_password" id="db_password" class="form-control" placeholder="Database password"
+                           value="{{ task.db_password if task is defined and task.db_password else '' }}" autocomplete="off">
+                </div>
+            </div>
+        </div>
+
+        <!-- Dynamic Variables Section -->
+        <div class="variables-section">
+            <div class="variables-header">
+                <label>📌 Variables</label>
+                <button type="button" id="add-var-btn" class="btn btn-sm btn-add-var">+ Add Variable</button>
+            </div>
+            <small class="form-hint">Define variables and use <code>{{ '{{variable_name}}' }}</code> in your script. They will be replaced at runtime.</small>
+            <div id="variables-container">
+                {% if existing_vars %}
+                    {% for v in existing_vars %}
+                    <div class="var-row">
+                        <input type="text" name="var_name[]" class="form-control var-name-input" placeholder="Variable name" value="{{ v.name }}">
+                        <span class="var-eq">=</span>
+                        <input type="text" name="var_value[]" class="form-control var-value-input" placeholder="Value" value="{{ v.value }}">
+                        <button type="button" class="btn btn-sm btn-remove-var" title="Remove variable">✕</button>
+                    </div>
+                    {% endfor %}
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label for="script_code" id="script-code-label">Script Code</label>
+            {{ form.script_code(class="form-control code-editor", rows=12, id="script_code") }}
+            <small class="form-hint" id="script-hint">Write code to execute. Output will be captured and displayed.</small>
+            <button type="button" id="test-run-btn" class="btn btn-run" style="margin-top: 0.5rem;">
+                ▶ Test Run
+            </button>
+            <span id="test-spinner" style="display:none; margin-left: 0.5rem;">⏳ Running...</span>
+        </div>
+
+        <div id="test-output-panel" class="test-output-panel" style="display:none;">
+            <div class="test-output-header">
+                <strong>📋 Test Result:</strong>
+                <span id="test-status-badge" class="badge"></span>
+                <button type="button" id="test-close-btn" class="btn btn-sm btn-secondary" style="margin-left:auto;">✕ Close</button>
+            </div>
+            <div id="test-output-content">
+                <div id="test-stdout" style="display:none;">
+                    <label><strong>📤 Print Output:</strong></label>
+                    <pre id="test-stdout-text" class="script-output"></pre>
+                </div>
+                <div id="test-stderr" style="display:none;">
+                    <label><strong>⚠ Errors:</strong></label>
+                    <pre id="test-stderr-text" class="error-output"></pre>
+                </div>
+            </div>
+        </div>
+
+        <div class="form-row">
+            <div class="form-group">
+                {{ form.schedule_type.label }}
+                {{ form.schedule_type(class="form-control", id="schedule_type") }}
+                <small class="form-hint">Daily/Weekly/Custom tasks run automatically at the scheduled time.</small>
+            </div>
+            <div class="form-group">
+                {{ form.notify_email.label }}
+                {{ form.notify_email(class="form-control", placeholder="email@example.com") }}
+                {% for error in form.notify_email.errors %}
+                    <span class="error">{{ error }}</span>
+                {% endfor %}
+                <small class="form-hint">Receive success/failure emails after execution.</small>
+            </div>
+        </div>
+
+        <div class="form-row" id="custom-interval-row" style="display:none;">
+            <div class="form-group">
+                {{ form.custom_interval_value.label }}
+                {{ form.custom_interval_value(class="form-control", placeholder="e.g. 30", min=1) }}
+                {% for error in form.custom_interval_value.errors %}
+                    <span class="error">{{ error }}</span>
+                {% endfor %}
+            </div>
+            <div class="form-group">
+                {{ form.custom_interval_unit.label }}
+                {{ form.custom_interval_unit(class="form-control") }}
+            </div>
+        </div>
+
+        <div class="form-row">
+            <div class="form-group">
+                {{ form.scheduled_date.label }}
+                {{ form.scheduled_date(class="form-control", type="date") }}
+                {% for error in form.scheduled_date.errors %}
+                    <span class="error">{{ error }}</span>
+                {% endfor %}
+            </div>
+            <div class="form-group">
+                {{ form.scheduled_time.label }}
+                {{ form.scheduled_time(class="form-control", type="time") }}
+            </div>
+        </div>
+
+        <div class="form-row">
+            <div class="form-group">
+                {{ form.end_date.label }}
+                {{ form.end_date(class="form-control", type="date") }}
+                {% for error in form.end_date.errors %}
+                    <span class="error">{{ error }}</span>
+                {% endfor %}
+            </div>
+            <div class="form-group">
+                {{ form.end_time.label }}
+                {{ form.end_time(class="form-control", type="time") }}
+            </div>
+        </div>
+
+        <div class="form-row">
+            <div class="form-group">
+                {{ form.priority.label }}
+                {{ form.priority(class="form-control") }}
+            </div>
+            <div class="form-group">
+                {{ form.status.label }}
+                {{ form.status(class="form-control") }}
+            </div>
+        </div>
+
+        <div class="form-actions">
+            <button type="submit" class="btn btn-primary">Save Task</button>
+            <a href="{{ url_for('main.index') }}" class="btn btn-secondary">Cancel</a>
+        </div>
+    </form>
+</div>
+
+<script>
+    (function() {
+        var scheduleType = document.getElementById('schedule_type');
+        var customRow = document.getElementById('custom-interval-row');
+        function toggleCustom() {
+            customRow.style.display = scheduleType.value === 'custom' ? '' : 'none';
+        }
+        scheduleType.addEventListener('change', toggleCustom);
+        toggleCustom();
+
+        // --- Dynamic Variables ---
+        var varContainer = document.getElementById('variables-container');
+        var addVarBtn = document.getElementById('add-var-btn');
+
+        function createVarRow(name, value) {
+            var row = document.createElement('div');
+            row.className = 'var-row';
+            row.innerHTML =
+                '<input type="text" name="var_name[]" class="form-control var-name-input" placeholder="Variable name" value="' + (name || '') + '">' +
+                '<span class="var-eq">=</span>' +
+                '<input type="text" name="var_value[]" class="form-control var-value-input" placeholder="Value" value="' + (value || '') + '">' +
+                '<button type="button" class="btn btn-sm btn-remove-var" title="Remove variable">✕</button>';
+            row.querySelector('.btn-remove-var').addEventListener('click', function() { row.remove(); });
+            return row;
+        }
+
+        addVarBtn.addEventListener('click', function() {
+            varContainer.appendChild(createVarRow('', ''));
+            varContainer.lastChild.querySelector('.var-name-input').focus();
+        });
+
+        // Attach remove handlers to existing rows
+        varContainer.querySelectorAll('.btn-remove-var').forEach(function(btn) {
+            btn.addEventListener('click', function() { btn.closest('.var-row').remove(); });
+        });
+
+        function getVariables() {
+            var vars = [];
+            varContainer.querySelectorAll('.var-row').forEach(function(row) {
+                var n = row.querySelector('.var-name-input').value.trim();
+                var v = row.querySelector('.var-value-input').value;
+                if (n) vars.push({name: n, value: v});
+            });
+            return vars;
+        }
+
+        // --- SQL Connection Panel ---
+        var connPanel = document.getElementById('sql-connection-panel');
+        var sqlTypeSelect = document.getElementById('sql_type');
+        var dbServerGroup = document.getElementById('db-server-group');
+        var dbPortGroup = document.getElementById('db-port-group');
+        var dbNameGroup = document.getElementById('db-name-group');
+        var dbCredRow = document.getElementById('db-credentials-row');
+        var dbUserPassRow = document.getElementById('db-user-pass-row');
+        var dbWinAuthGroup = document.getElementById('db-win-auth-group');
+        var dbWinAuthCheck = document.getElementById('db_win_auth');
+
+        function toggleSqlFields() {
+            var st = sqlTypeSelect.value;
+            var isSqlite = (st === 'sqlite');
+            var isMssql = (st === 'mssql');
+            dbServerGroup.style.display = isSqlite ? 'none' : '';
+            dbPortGroup.style.display = isSqlite ? 'none' : '';
+            dbNameGroup.style.display = isSqlite ? 'none' : '';
+            dbCredRow.style.display = isSqlite ? 'none' : '';
+            dbWinAuthGroup.style.display = isMssql ? '' : 'none';
+            if (!isMssql) {
+                dbWinAuthCheck.checked = false;
+            }
+            toggleWinAuth();
+        }
+
+        function toggleWinAuth() {
+            var hide = dbWinAuthCheck.checked;
+            dbUserPassRow.style.display = hide ? 'none' : '';
+        }
+
+        sqlTypeSelect.addEventListener('change', toggleSqlFields);
+        dbWinAuthCheck.addEventListener('change', toggleWinAuth);
+
+        // Test Connection button
+        var testConnBtn = document.getElementById('test-conn-btn');
+        var connSpinner = document.getElementById('conn-spinner');
+        var connResult = document.getElementById('conn-result');
+        var connResultText = document.getElementById('conn-result-text');
+        var connCloseBtn = document.getElementById('conn-close-btn');
+
+        testConnBtn.addEventListener('click', function() {
+            testConnBtn.disabled = true;
+            connSpinner.style.display = 'inline';
+            connResult.style.display = 'none';
+
+            fetch('{{ url_for("main.api_test_connection") }}', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': '{{ csrf_token() }}'
+                },
+                body: JSON.stringify({
+                    sql_type: sqlTypeSelect.value,
+                    db_server: document.getElementById('db_server').value,
+                    db_port: parseInt(document.getElementById('db_port').value) || null,
+                    db_name: document.getElementById('db_name').value,
+                    db_username: document.getElementById('db_username').value,
+                    db_password: document.getElementById('db_password').value,
+                    db_win_auth: dbWinAuthCheck.checked
+                })
+            })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                connResultText.textContent = data.message;
+                connResult.className = 'conn-result ' + (data.status === 'success' ? 'conn-success' : 'conn-failure');
+                connResult.style.display = 'flex';
+            })
+            .catch(function(err) {
+                connResultText.textContent = '❌ Error: ' + err.message;
+                connResult.className = 'conn-result conn-failure';
+                connResult.style.display = 'flex';
+            })
+            .finally(function() {
+                testConnBtn.disabled = false;
+                connSpinner.style.display = 'none';
+            });
+        });
+
+        connCloseBtn.addEventListener('click', function() {
+            connResult.style.display = 'none';
+        });
+
+        // Script type switching — update placeholder and label
+        var scriptType = document.getElementById('script_type');
+        var scriptCode = document.getElementById('script_code');
+        var scriptLabel = document.getElementById('script-code-label');
+        var scriptHint = document.getElementById('script-hint');
+
+        var placeholders = {
+            python: "# Write your Python code here\nprint('Hello, World!')",
+            bat: "@echo off\necho Hello from batch script\ndir",
+            sql: "-- Write SQL statements here\nCREATE TABLE demo (id INTEGER, name TEXT);\nINSERT INTO demo VALUES (1, 'Test');\nSELECT * FROM demo;"
+        };
+        var labels = {
+            python: "Python Script",
+            bat: "Batch / CMD Script",
+            sql: "SQL Script"
+        };
+        var hints = {
+            python: "Write Python code. print() output will be captured.",
+            bat: "Write Batch/CMD commands. Console output will be captured.",
+            sql: "Write SQL statements. They will run against the configured database connection above."
+        };
+
+        function updateScriptUI() {
+            var t = scriptType.value;
+            scriptCode.placeholder = placeholders[t] || placeholders.python;
+            scriptLabel.textContent = labels[t] || "Script Code";
+            scriptHint.textContent = hints[t] || hints.python;
+
+            // Show/hide SQL connection panel
+            connPanel.style.display = (t === 'sql') ? 'block' : 'none';
+            if (t === 'sql') {
+                toggleSqlFields();
+            }
+        }
+        scriptType.addEventListener('change', updateScriptUI);
+        updateScriptUI();
+
+        // Test Run functionality
+        var testBtn = document.getElementById('test-run-btn');
+        var spinner = document.getElementById('test-spinner');
+        var panel = document.getElementById('test-output-panel');
+        var closeBtn = document.getElementById('test-close-btn');
+        var statusBadge = document.getElementById('test-status-badge');
+        var stdoutDiv = document.getElementById('test-stdout');
+        var stderrDiv = document.getElementById('test-stderr');
+        var stdoutText = document.getElementById('test-stdout-text');
+        var stderrText = document.getElementById('test-stderr-text');
+
+        testBtn.addEventListener('click', function() {
+            var code = scriptCode.value;
+            if (!code.trim()) { alert('Please enter some script code first.'); return; }
+
+            testBtn.disabled = true;
+            spinner.style.display = 'inline';
+            panel.style.display = 'none';
+
+            var payload = { script_code: code, script_type: scriptType.value, variables: getVariables() };
+
+            // Include SQL connection config if script type is sql
+            if (scriptType.value === 'sql') {
+                payload.sql_type = sqlTypeSelect.value;
+                payload.db_server = document.getElementById('db_server').value;
+                payload.db_port = parseInt(document.getElementById('db_port').value) || null;
+                payload.db_name = document.getElementById('db_name').value;
+                payload.db_username = document.getElementById('db_username').value;
+                payload.db_password = document.getElementById('db_password').value;
+                payload.db_win_auth = dbWinAuthCheck.checked;
+            }
+
+            fetch('{{ url_for("main.test_script") }}', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': '{{ csrf_token() }}'
+                },
+                body: JSON.stringify(payload)
+            })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                statusBadge.textContent = data.status.toUpperCase();
+                statusBadge.className = 'badge ' + (data.status === 'success' ? 'badge-low' : 'badge-high');
+
+                if (data.output) {
+                    stdoutText.textContent = data.output;
+                    stdoutDiv.style.display = 'block';
+                } else {
+                    stdoutDiv.style.display = 'none';
+                }
+                if (data.error) {
+                    stderrText.textContent = data.error;
+                    stderrDiv.style.display = 'block';
+                } else {
+                    stderrDiv.style.display = 'none';
+                }
+                if (!data.output && !data.error) {
+                    stdoutText.textContent = '(no output)';
+                    stdoutDiv.style.display = 'block';
+                }
+                panel.style.display = 'block';
+            })
+            .catch(function(err) {
+                statusBadge.textContent = 'ERROR';
+                statusBadge.className = 'badge badge-high';
+                stderrText.textContent = err.message;
+                stderrDiv.style.display = 'block';
+                stdoutDiv.style.display = 'none';
+                panel.style.display = 'block';
+            })
+            .finally(function() {
+                testBtn.disabled = false;
+                spinner.style.display = 'none';
+            });
+        });
+
+        closeBtn.addEventListener('click', function() {
+            panel.style.display = 'none';
+        });
+    })();
+</script>
+{% endblock %}

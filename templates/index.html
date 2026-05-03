@@ -1,0 +1,174 @@
+{% extends "base.html" %}
+
+{% block title %}Tasks - Schedule Task App{% endblock %}
+
+{% block head %}
+<meta http-equiv="refresh" content="15">
+{% endblock %}
+
+{% block content %}
+<div class="filters">
+    <div class="filter-group">
+        <label>Status:</label>
+        <a href="?status=all&sort={{ sort_by }}" class="{% if filter_status == 'all' %}active{% endif %}">All</a>
+        <a href="?status=pending&sort={{ sort_by }}" class="{% if filter_status == 'pending' %}active{% endif %}">Pending</a>
+        <a href="?status=in_progress&sort={{ sort_by }}" class="{% if filter_status == 'in_progress' %}active{% endif %}">In Progress</a>
+        <a href="?status=completed&sort={{ sort_by }}" class="{% if filter_status == 'completed' %}active{% endif %}">Completed</a>
+    </div>
+    <div class="filter-group">
+        <label>Sort:</label>
+        <a href="?status={{ filter_status }}&sort=scheduled_date" class="{% if sort_by == 'scheduled_date' %}active{% endif %}">Date</a>
+        <a href="?status={{ filter_status }}&sort=priority" class="{% if sort_by == 'priority' %}active{% endif %}">Priority</a>
+    </div>
+</div>
+
+{% if tasks %}
+<div class="task-list">
+    {% for task in tasks %}
+    <div class="task-card priority-{{ task.priority }} {% if task.status == 'completed' %}completed{% endif %}">
+        <div class="task-header">
+            <h3>{{ task.title }}</h3>
+            <div class="task-badges">
+                {% if task.script_code %}
+                <span class="badge badge-script">{{ task.script_type | default('python') | upper }}</span>
+                {% endif %}
+                {% if task.schedule_type != 'once' %}
+                <span class="badge badge-schedule">{{ task.schedule_type | capitalize }}</span>
+                {% endif %}
+                <span class="badge badge-{{ task.priority }}">{{ task.priority | capitalize }}</span>
+            </div>
+        </div>
+        {% if task.description %}
+        <p class="task-desc">{{ task.description }}</p>
+        {% endif %}
+        <div class="task-meta">
+            <span>📅 {{ task.scheduled_date.strftime('%b %d, %Y') }}</span>
+            {% if task.end_date %}
+            <span>➡ {{ task.end_date.strftime('%b %d, %Y') }}</span>
+            {% endif %}
+            {% if task.scheduled_time %}
+            <span>🕐 {{ task.scheduled_time.strftime('%I:%M %p') }}</span>
+            {% endif %}
+            {% if task.end_time %}
+            <span>– {{ task.end_time.strftime('%I:%M %p') }}</span>
+            {% endif %}
+            {% if task.schedule_type == 'custom' and task.custom_interval_value %}
+            <span class="badge badge-schedule">Every {{ task.custom_interval_value }} {{ task.custom_interval_unit }}</span>
+            {% endif %}
+            <span class="status-badge status-{{ task.status }}">{{ task.status | replace('_', ' ') | capitalize }}</span>
+            {% if task.last_run_at %}
+            <span class="run-status run-{{ task.last_run_status }}">
+                Last run: {{ task.last_run_status | capitalize }} ({{ task.last_run_at.strftime('%b %d %I:%M %p') }})
+            </span>
+            {% endif %}
+        </div>
+        <div class="task-actions">
+            {% if task.script_code %}
+            <button type="button" class="btn btn-sm btn-run run-task-btn" data-task-id="{{ task.id }}">▶ Run</button>
+            <a href="{{ url_for('main.task_result', task_id=task.id) }}" class="btn btn-sm btn-info">📋 History</a>
+            {% endif %}
+            <form method="POST" action="{{ url_for('main.toggle_task', task_id=task.id) }}" style="display:inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-sm {% if task.status == 'completed' %}btn-warning{% else %}btn-success{% endif %}">
+                    {% if task.status == 'completed' %}↩ Reopen{% else %}✓ Complete{% endif %}
+                </button>
+            </form>
+            <a href="{{ url_for('main.edit_task', task_id=task.id) }}" class="btn btn-sm btn-secondary">✏ Edit</a>
+            <form method="POST" action="{{ url_for('main.delete_task', task_id=task.id) }}" style="display:inline"
+                  onsubmit="return confirm('Delete this task?')">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-sm btn-danger">🗑 Delete</button>
+            </form>
+        </div>
+        <div class="inline-output-panel" id="output-panel-{{ task.id }}" style="display:none;">
+            <div class="output-header">
+                <strong>📤 Script Output:</strong>
+                <span class="badge" id="output-status-{{ task.id }}"></span>
+                <button type="button" class="btn btn-sm btn-secondary close-output-btn" data-task-id="{{ task.id }}" style="margin-left:auto;">✕</button>
+            </div>
+            <div id="output-stdout-{{ task.id }}" style="display:none;">
+                <pre class="output-block script-output" id="output-stdout-text-{{ task.id }}"></pre>
+            </div>
+            <div id="output-stderr-{{ task.id }}" style="display:none;">
+                <label><strong>⚠ Errors:</strong></label>
+                <pre class="output-block output-error" id="output-stderr-text-{{ task.id }}"></pre>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="empty-state">
+    <h2>No tasks found</h2>
+    <p>Create your first scheduled task to get started!</p>
+    <a href="{{ url_for('main.create_task') }}" class="btn btn-primary">+ New Task</a>
+</div>
+{% endif %}
+
+<script>
+(function() {
+    document.querySelectorAll('.run-task-btn').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            var taskId = this.getAttribute('data-task-id');
+            var panel = document.getElementById('output-panel-' + taskId);
+            var statusBadge = document.getElementById('output-status-' + taskId);
+            var stdoutDiv = document.getElementById('output-stdout-' + taskId);
+            var stderrDiv = document.getElementById('output-stderr-' + taskId);
+            var stdoutText = document.getElementById('output-stdout-text-' + taskId);
+            var stderrText = document.getElementById('output-stderr-text-' + taskId);
+
+            btn.disabled = true;
+            btn.textContent = '⏳ Running...';
+            panel.style.display = 'none';
+
+            fetch('/api/task/' + taskId + '/run', {
+                method: 'POST',
+                headers: { 'X-CSRFToken': '{{ csrf_token() }}' }
+            })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                statusBadge.textContent = data.status.toUpperCase();
+                statusBadge.className = 'badge ' + (data.status === 'success' ? 'badge-low' : 'badge-high');
+
+                if (data.output) {
+                    stdoutText.textContent = data.output;
+                    stdoutDiv.style.display = 'block';
+                } else {
+                    stdoutDiv.style.display = 'none';
+                }
+                if (data.error) {
+                    stderrText.textContent = data.error;
+                    stderrDiv.style.display = 'block';
+                } else {
+                    stderrDiv.style.display = 'none';
+                }
+                if (!data.output && !data.error) {
+                    stdoutText.textContent = '(no output)';
+                    stdoutDiv.style.display = 'block';
+                }
+                panel.style.display = 'block';
+            })
+            .catch(function(err) {
+                statusBadge.textContent = 'ERROR';
+                statusBadge.className = 'badge badge-high';
+                stderrText.textContent = err.message;
+                stderrDiv.style.display = 'block';
+                stdoutDiv.style.display = 'none';
+                panel.style.display = 'block';
+            })
+            .finally(function() {
+                btn.disabled = false;
+                btn.textContent = '▶ Run';
+            });
+        });
+    });
+
+    document.querySelectorAll('.close-output-btn').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            var taskId = this.getAttribute('data-task-id');
+            document.getElementById('output-panel-' + taskId).style.display = 'none';
+        });
+    });
+})();
+</script>
+{% endblock %}
